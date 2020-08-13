@@ -1,0 +1,462 @@
+
+---
+title: "Project"
+author: "TAMU Analytica"
+date: "4/21/2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
+install.packages("leaps")
+install.packages("ISLR")
+install.packages("boot")
+install.packages("doParallel")
+install.packages("glmnet")
+install.packages("MASS")
+install.packages("class")
+install.packages("neuralnet")
+install.packages("e1071")
+install.packages("tree")
+install.packages("randomForest")
+install.packages("gbm")
+install.packages("cluster")
+library(leaps)
+library(ISLR)
+library(boot)
+library(doParallel)
+library(glmnet)
+library(MASS)
+library(class)
+library(neuralnet)
+library(e1071)
+library(tree)
+library(randomForest)
+library(gbm)
+library(cluster)
+```
+
+```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE}
+rm(list=ls())
+rawData=data.frame(matrix(ncol = 1))
+epilepsy=read.table("Raw Data/epilepsy.txt",header = FALSE)
+for (i in c(1:5)){
+  temp=paste("Raw Data/",toString(i), sep="")
+  directory=paste(temp,"/", sep="")
+  setwd(directory)
+  filelist = list.files(pattern = ".*.txt")
+  if (identical(filelist, character(0))){
+    filelist = list.files(pattern = ".*.TXT")
+  }
+  fList = as.data.frame(lapply(filelist, function(x)read.table(x, header=FALSE)))
+  rawData=cbind(rawData,fList)
+}
+rawData=rawData[-1]
+rawData=as.data.frame(t(rawData))
+rawData=cbind(rawData,epilepsy)
+rm(list = ls()[!ls() %in% c("rawData")])
+dataGathering<-function(m){
+  tempDataFrame1<-data.frame(matrix(ncol=179))
+  for (k in c(m:(m+124))){
+    j=1
+    tempDataFrame<-data.frame(matrix(nrow = 23,ncol=179))
+    for (i in c(1:23)){
+      tempDataFrame[i,1:178]=as.integer(rawData[k,j:(j+177)])
+      tempDataFrame[i,179]=as.integer(rawData[k,4098])
+      j=j+178
+    }
+    tempDataFrame1<-rbind(tempDataFrame1,tempDataFrame)
+  }
+  return(tempDataFrame1)
+}
+listed=(mclapply(seq(1, 500, 125),dataGathering,mc.cores=4))
+tempDataFrame1<-data.frame(matrix(ncol=179))
+for (i in c(1:4)){
+   tempDataFrame1<-rbind(tempDataFrame1,listed[[i]][-1,])
+}
+mainData=tempDataFrame1[-1,]
+names(mainData)[179]="epilepsy"
+rawData=as.data.frame(t(rawData))
+rm(list = ls()[!ls() %in% c("mainData")])
+```
+
+```{r import csv}
+mainData=read.csv("Data.csv") 
+```
+
+```{r clear variables and add epilepsy predictor}
+rm(list=setdiff(ls(), "mainData"))
+epilepsy=matrix(ncol=dim(mainData)[1])
+epilepsy=as.integer(mainData$y == 1)
+names(epilepsy)="epilepsy"
+mainData=cbind(mainData,epilepsy)
+rm(list=setdiff(ls(), "mainData"))
+mainData[1:2]<-NULL
+mainData$y<-NULL
+```
+
+```{r averaging data}
+averagedData=data.frame()
+i=1
+j=1
+while (i<dim(mainData)[1])
+{
+  k=1
+  while (k<180)
+  {
+  averagedData[j,k]=as.numeric(mean(mainData[i:(i+22),k]))
+  k=k+1
+  }
+  i=i+23
+  j=j+1
+}
+name=names(mainData)
+names(averagedData)=name
+rm(list = ls()[!ls() %in% c("averagedData", "mainData","scaledAverageData","scaledFulldata")])
+```
+
+```{r full data scaling}
+maxs <- apply(mainData, 2, max) 
+mins <- apply(mainData, 2, min)
+scaledFulldata <- as.data.frame(scale(mainData, center = mins, scale = maxs - mins))
+epilepsy=as.factor(mainData$epilepsy)
+names(epilepsy)="epilepsy"
+scaledFulldata=cbind(scaledFulldata,epilepsy)
+rm(list = ls()[!ls() %in% c("averagedData", "mainData","scaledAverageData","scaledFulldata")])
+```
+
+```{r averaged data scaling}
+maxs <- apply(averagedData, 2, max) 
+mins <- apply(averagedData, 2, min)
+scaledAverageData <- as.data.frame(scale(averagedData, center = mins, scale = maxs - mins))
+rm(list = ls()[!ls() %in% c("averagedData", "mainData","scaledAverageData","scaledFulldata")])
+```
+
+```{r standardize fulldata}
+standardizedData=as.data.frame(scale(mainData[,-179]))
+epilepsy=as.numeric(mainData$epilepsy)
+names(epilepsy)="epilepsy"
+standardizedData=cbind(standardizedData,epilepsy)
+rm(list = ls()[!ls() %in% c("averagedData", "mainData","standardizedData","scaledAverageData","scaledFulldata")])
+```
+
+```{r standardize averagedData}
+standardizedAveragedData=as.data.frame(scale(averagedData[,-179]))
+epilepsy=as.numeric(averagedData$epilepsy)
+names(epilepsy)="epilepsy"
+standardizedAveragedData=cbind(standardizedAveragedData,epilepsy)
+rm(list = ls()[!ls() %in% c("averagedData", "mainData","standardizedData","scaledAverageData","scaledFulldata","standardizedAveragedData")])
+```
+
+```{r selecting the data set}
+#mydata=averagedData
+#mydata=mainData
+mydata=scaledAverageData
+#mydata=scaledFulldata
+#mydata=standardizedAveragedData
+#mydata=standardizedData
+rm(list=setdiff(ls(), "mydata"))
+```
+
+```{r neural network}
+train=sample(1:nrow(mydata),size=nrow(mydata)/2)
+train.X=mydata[-train,]
+test.X=mydata[train,]
+n <- names(train.X)
+f <- as.formula(paste("epilepsy ~", paste(n[!n %in% "epilepsy"], collapse = " +")))
+nn <- neuralnet(f,data=train.X,hidden=c(120,82,50,10,2),threshold=0.00001,linear.output=FALSE)
+pr.nn <- compute(nn,test.X[-179])
+pr.result=pr.nn$net.result
+pr.result <- ifelse(pr.result > 0.5,1,0)
+MSE.ann=mean(pr.result==test.X$epilepsy)
+print(MSE.ann)
+table(pr.result,test.X$epilepsy)
+simple_roc <- function(labels, scores){
+  labels <- labels[order(scores, decreasing=TRUE)]
+  data.frame(TPR=cumsum(labels)/sum(labels), FPR=cumsum(!labels)/sum(!labels), labels)
+}
+glm_simple_roc=simple_roc(test.X$epilepsy,pr.result)
+plot(glm_simple_roc[2:1],pch=".")
+rm(list=setdiff(ls(), "mydata"))
+```
+
+```{r logistic k fold}
+k=10    # give k fold value
+error=matrix(ncol=k)
+l=nrow(mydata)/k
+i=1
+j=1
+while (i<nrow(mydata)){
+train=i:(i+l-1)
+test=mydata[train,]
+train=mydata[-train,]
+fit.lm=glm(epilepsy ~., data = train, family = "binomial")
+pr.lm <- predict(fit.lm,test[-179])
+pr.lm <- ifelse(pr.lm > 0.5,1,0)
+error[j]=mean(pr.lm==test$epilepsy)
+j=j+1
+i=i+l
+}
+print(mean(error))
+rm(list=setdiff(ls(), "mydata"))
+```
+
+```{r logistic}
+train=sample(1:nrow(mydata),size=nrow(mydata)/2)
+train.X=mydata[-train,]
+test.X=mydata[train,]
+fit.lm=glm(epilepsy ~., data = train.X, family = "binomial")
+pr.lm <- predict(fit.lm,test.X)
+lm.pred=rep(0,length(train))
+lm.pred[pr.lm>0.5]=1
+MSE.lm=mean(lm.pred==test.X$epilepsy)
+print(MSE.lm)
+table(lm.pred,test.X$epilepsy)
+simple_roc <- function(labels, scores){
+  labels <- labels[order(scores, decreasing=TRUE)]
+  data.frame(TPR=cumsum(labels)/sum(labels), FPR=cumsum(!labels)/sum(!labels), labels)
+}
+glm_simple_roc=simple_roc(test.X$epilepsy,lm.pred)
+plot(glm_simple_roc[2:1],pch=".")
+rm(list=setdiff(ls(), "mydata"))
+```
+
+```{r LDA for all predictors}
+set.seed(1)
+indexes=sample(1:nrow(mydata),size=0.5*nrow(mydata))
+test=mydata[indexes,]
+train=mydata[-indexes,]
+lda.fit=lda(epilepsy~., data=train)
+lda.pred=predict(lda.fit,test)
+lda.class=lda.pred$class
+table(lda.class,test$epilepsy)
+mean(lda.class==test$epilepsy)
+roc.curve=function(s,print=FALSE){
+Ps=(lda.pred$posterior[,2]>s)*1
+FP=sum((Ps==1)*(test$epilepsy==0))/sum(test$epilepsy==0)
+TP=sum((Ps==1)*(test$epilepsy==1))/sum(test$epilepsy==1)
+if(print==TRUE){
+print(table(Observed=test$epilepsy,Predicted=Ps))
+}
+vect=c(FP,TP)
+names(vect)=c("FPR","TPR")
+return(vect)
+}
+threshold=0.5
+roc.curve(threshold,print=FALSE)
+ROC.curve=Vectorize(roc.curve)
+M.ROC=ROC.curve(seq(0,1,by=0.01))
+plot(M.ROC[1,],M.ROC[2,],col="grey",lwd=2,type="l",xlab="False positive rate",ylab="True positive rate")
+rm(list=setdiff(ls(), "mydata"))
+```
+
+```{r LDA k fold cv for all predictors}
+k=10    # give k fold value
+error=matrix(ncol=k)
+l=nrow(mydata)/k
+i=1
+j=1
+while (i<nrow(mydata)){
+train=i:(i+l-1)
+test=mydata[train,]
+train=mydata[-train,]
+lda.fit=lda(epilepsy~., data=train)
+lda.pred=predict(lda.fit,test)
+lda.class=lda.pred$class
+error[j]=mean(lda.class==test$epilepsy)
+j=j+1
+i=i+l
+}
+print(mean(error))
+rm(list=setdiff(ls(), "mydata"))
+```
+
+```{r KNN kfold CV}   
+kerror=matrix(ncol=50) #k value for knn goes from 1 t0 50 with CV for each k value value
+m=1             
+while (m<51){
+k=10                #k fold value
+error=matrix(ncol=k)
+l=nrow(mydata)/k
+i=1
+j=1
+while (i<nrow(mydata)){
+train=i:(i+l-1)
+train.X=mydata[-train,]
+test.X=mydata[train,]
+train.epilepsy=train.X$epilepsy
+set.seed(1)
+knn.pred=knn(train.X,test.X,train.epilepsy,k=m,use.all = TRUE)
+error[j]=mean(knn.pred!=test.X$epilepsy)
+j=j+1
+i=i+l
+}
+kerror[m]=mean(error)
+m=m+1
+}
+print(mean(kerror))
+plot(1:length(kerror),kerror,type="l",xlab="k value",ylab="Mean test error")
+rm(list=setdiff(ls(), "mydata"))
+```
+
+```{r KNN}
+set.seed(1)
+train=sample(1:nrow(mydata),size=nrow(mydata)/2)
+train.X=mydata[-train,]
+test.X=mydata[train,]
+train.epilepsy=train.X$epilepsy
+set.seed(1)
+knn.pred=knn(train.X,test.X,train.epilepsy,k=1,use.all = TRUE)
+table(knn.pred,test.X$epilepsy)
+error=mean(knn.pred==test.X$epilepsy)
+print(error)
+rm(list=setdiff(ls(), "mydata"))
+```
+
+
+
+```{r SVC}
+mydata$epilepsy=as.factor(mydata$epilepsy)
+set.seed(1)
+train=sample(1:nrow(mydata),size=nrow(mydata)/2)
+train.X=mydata[-train,]
+test.X=mydata[train,]
+svmfit=svm(epilepsy~.,data=train.X,cost=0.1,degree=1)
+svmpredict=predict(svmfit,test.X,type = "response")
+table(svmpredict,test.X$epilepsy)
+mean(svmpredict==test.X$epilepsy)
+simple_roc <- function(labels, scores){
+  labels <- labels[order(scores, decreasing=TRUE)]
+  data.frame(TPR=cumsum(labels)/sum(labels), FPR=cumsum(!labels)/sum(!labels), labels)
+}
+glm_simple_roc=simple_roc(test.X$epilepsy,svmpredict)
+plot(glm_simple_roc[2:1],pch=".")
+rm(list=setdiff(ls(), "mydata"))
+```
+
+
+```{r SVM Radial}
+mydata$epilepsy=as.factor(mydata$epilepsy)
+set.seed(1)
+train=sample(1:nrow(mydata),size=nrow(mydata)/2)
+train.X=mydata[-train,]
+test.X=mydata[train,]
+svmfit=svm(epilepsy~. ,data=train.X,kernel="radial",ranges=list(cost=1,gamma=0.5))
+svmpredict=predict(svmfit,test.X,type = "response")
+table(svmpredict,test.X$epilepsy)
+mean(svmpredict==test.X$epilepsy)
+rm(list=setdiff(ls(), "mydata"))
+```
+
+```{r SVM polynomial}
+mydata$epilepsy=as.factor(mydata$epilepsy)
+set.seed(1)
+train=sample(1:nrow(mydata),size=nrow(mydata)/2)
+train.X=mydata[-train,]
+test.X=mydata[train,]
+svmfit=svm(epilepsy~. ,data=train.X,kernel="polynomial",degree = 2 ,cost = 100)
+svmpredict=predict(svmfit,test.X,type = "response")
+table(svmpredict,test.X$epilepsy)
+mean(svmpredict==test.X$epilepsy)
+rm(list=setdiff(ls(), "mydata"))
+```
+
+```{r trees}
+rm(list=setdiff(ls(), "mydata"))
+epilepsytree<-tree(epilepsy~.,data = mydata)
+summary(epilepsytree)
+plot(epilepsytree)
+text(epilepsytree,pretty=0)
+rm(list=setdiff(ls(), "mydata"))
+```
+
+```{r }
+##Training and Test Data
+rm(list=setdiff(ls(), "mydata"))
+set.seed(1)
+mydata$epilepsy=as.factor(mydata$epilepsy)
+train<-sample(1:nrow(mydata),nrow(mydata)/2)
+moretrain<-mydata[train,]
+moretest<-mydata[-train,]
+treeepilepsy<-tree(epilepsy~.,data=moretrain)
+treepred<-predict(treeepilepsy,moretest,type="class")
+table(treepred,moretest$epilepsy)
+mean(treepred==moretest$epilepsy)
+rm(list=setdiff(ls(), "mydata"))
+```
+
+```{r tree pruning}
+rm(list=setdiff(ls(), "mydata"))
+set.seed(1)
+mydata$epilepsy=as.factor(mydata$epilepsy)
+train<-sample(1:nrow(mydata),nrow(mydata)/2)
+moretrain<-mydata[train,]
+moretest<-mydata[-train,]
+epilepsytree<-tree(epilepsy~.,data = moretrain)
+summary(epilepsytree)
+plot(epilepsytree)
+text(epilepsytree,pretty=0)
+epilepsycv<-cv.tree(epilepsytree,FUN=prune.misclass)
+plot(epilepsycv$size,epilepsycv$dev,type = "b")
+
+#points((which.min(epilepsycv$dev)),epilepsycv$dev[which.min(epilepsycv$dev)],col="red",cex=2,pch=20)
+
+epilepsyprune<-prune.misclass(epilepsytree,best=epilepsycv$size[which.min(epilepsycv$dev)])
+plot(epilepsyprune)
+text(epilepsyprune,pretty=0)
+pruntreepred<-predict(epilepsyprune,moretest,type="class")
+table(pruntreepred,moretest$epilepsy)
+pruned=mean(pruntreepred==moretest$epilepsy)
+
+epilepsybag<-randomForest(epilepsy~.,data=moretrain, mtry=178, ntree=100, importance=TRUE)
+bagtreepred<-predict(epilepsybag,moretest,type="class")
+table(bagtreepred,moretest$epilepsy)
+bag=mean(bagtreepred==moretest$epilepsy)
+
+epilepsyrf<-randomForest(epilepsy~.,data=moretrain, mtry = sqrt(178), ntree=100, importance=TRUE)
+randtreepred<-predict(epilepsyrf,moretest,type="class")
+table(randtreepred,moretest$epilepsy)
+random=mean(randtreepred==moretest$epilepsy)
+
+cat("\nPrune: ",pruned)
+cat("\nBag: ",bag)
+cat("\nRandom: ",random)
+```
+
+
+```{r naiveBayes }
+set.seed(1)
+mydata$epilepsy=as.factor(mydata$epilepsy)
+train=sample(1:nrow(mydata),size=nrow(mydata)/2)
+train.X=mydata[-train,]
+test.X=mydata[train,]
+model <- naiveBayes(epilepsy ~ ., data = train.X)
+preds <- predict(model,test.X[-179],type = "class")
+mean(preds==test.X$epilepsy)
+table(preds,test.X$epilepsy)
+rm(list=setdiff(ls(), "mydata"))
+```
+
+```{r unsupervised k means clustering}
+wss <- (nrow(mydata)-1)*sum(apply(mydata[-179],2,var))
+for (i in 2:178) wss[i] <- sum(kmeans(mydata[-179],
+  	centers=i)$withinss)
+plot(1:178, wss, type="b", xlab="Number of Clusters",
+  ylab="Within groups sum of squares")
+fit <- kmeans(mydata[-179], 5)
+clusplot(mydata, fit$cluster, color=TRUE, shade=TRUE, labels=2, lines=0)
+```
+
+```{r unsupervised Hierarchical Clustering}
+set.seed(1)
+distance=dist(mydata[-179],method="euclidian")
+hc.complete=hclust(distance, method="complete")
+plot(hc.complete)
+groups <- cutree(hc.complete, k=50) # cut tree into 5 clusters
+# draw dendogram with red borders around the 5 clusters 
+rect.hclust(hc.complete, k=50, border="red")
+```
+
